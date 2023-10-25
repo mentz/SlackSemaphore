@@ -3,7 +3,9 @@ from datetime import datetime
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
-app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
+import config
+
+app = App(token=config.SLACK_BOT_TOKEN)
 
 users = {} # key: user_id, value: emoji
 subscribed = {} # key: emoji
@@ -74,7 +76,7 @@ def receive_status_update(event, say):
 
 
 if __name__ == "__main__":
-    handler = SocketModeHandler(app, os.environ.get("SLACK_SOCKET_MODE_TOKEN"))
+    handler = SocketModeHandler(app, config.SLACK_SOCKET_MODE_TOKEN)
     handler.start() # use this to have an event listener
     # handler.connect() # use this to just connect without blocking the thread
 
