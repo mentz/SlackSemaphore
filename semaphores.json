@@ -1,5 +1,10 @@
 [
   {
+    "resource": "the coffee machine",
+    "seats": 1,
+    "emoji": ":coffee:"
+  },
+  {
     "resource": "be the GOAT",
     "seats": 1,
     "emoji": ":goat:"
