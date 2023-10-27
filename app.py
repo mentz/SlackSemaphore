@@ -38,35 +38,154 @@ def init_subscriptions():
     print("Done initializing subscriptions:", subscriptions)
 
 
-def user_update(user_id, emoji):
+def is_user_subscribed(user_id, emoji):
+    if emoji not in semaphores.keys():
+        return False
+
+    return user_id in subscriptions[emoji]
+
+
+def try_advance_semaphore(client, emoji):
+    semaphore = semaphores[emoji]
+    user_waiting = len(semaphore["queue"]) > 0
+    seat_available = len(semaphore["holders"]) < semaphore["seats"]
+
+    if user_waiting and seat_available:
+        new_holder = semaphore["queue"].pop()
+        semaphore["holders"].append(new_holder)
+        notify_user_of_acquiring(client, new_holder, emoji)
+        notify_enqueued_users(client, emoji)
+
+
+def pop_user_from_semaphore(client, user_id, emoji):
+    if emoji not in semaphores.keys():
+        return
+
+    semaphore = semaphores[emoji]
+    message = ""
+    if user_id in semaphore["queue"]:
+        message = f"You just left the queue for {emoji}."
+        position = semaphore["queue"].index(user_id)
+        semaphore["queue"].remove(user_id)
+        notify_enqueued_users(client, emoji, starting_from=position)
+
+    if user_id in semaphore["holders"]:
+        resource = semaphore["resource"]
+        message = f"Thank you for returning {resource} :patrickprayge:!"
+        semaphore["holders"].remove(user_id)
+        try_advance_semaphore(client, emoji)
+
+    if len(message) > 0:
+        client.chat_postMessage(channel=user_id, text=message)
+
+
+def push_user_to_semaphore(client, user_id, emoji):
+    # message is sent by try_advance_semaphore
+    semaphore = semaphores[emoji]
+
+    if user_id in semaphore["holders"]:
+        return
+
+    if user_id in semaphore["queue"]:
+        return
+
+    semaphore["queue"].append(user_id)
+    try_advance_semaphore(client, emoji)
+    notify_holders(client, emoji)
+
+
+def notify_user_of_acquiring(client, user_id, emoji):
+    resource = semaphores[emoji]["resource"]
+    client.chat_postMessage(
+        channel=user_id,
+        text=(
+            f"You're now authorized to access {resource}.\n"
+            + f"Please remember to release the resource by removing {emoji} from your "
+            + "status when you're done.\nHave fun :party_parrot:!"
+        ),
+    )
+
+
+def notify_enqueued_users(client, emoji, starting_from=0):
+    semaphore = semaphores[emoji]
+    for idx, user_id in enumerate(semaphore["queue"]):
+        if idx < starting_from:
+            continue
+
+        message = f"News on {emoji}: You're "
+        if idx == 0:
+            message += "next in line. Be prepared, it's coming soon!"
+        else:
+            message += f"behind {idx} others waiting for the resource."
+
+        client.chat_postMessage(channel=user_id, text=message)
+
+
+def notify_holders(client, emoji):
+    semaphore = semaphores[emoji]
+    queue_size = len(semaphore["queue"])
+
+    if queue_size == 0:
+        return
+
+    if queue_size == 1:
+        people_substr = "is 1 person"
+    else:
+        people_substr = f"are {queue_size} people"
+
+    message = (
+        "Hey friend! Not to pressure you, but just so you know, there "
+        + f"{people_substr} waiting on {emoji}. :slightly_smiling_face:"
+    )
+
+    for user_id in semaphore["holders"]:
+        client.chat_postMessage(channel=user_id, text=message)
+
+
+def user_update(client, user_id, emoji):
     previous_emoji = users.get(user_id)
     users[user_id] = emoji
 
-    # If user is subscribed to a queue on the previous or new emoji,
-    # update the semaphores.
+    # Updates might not be related to status emoji changes
+    if previous_emoji == emoji:
+        return
 
-    print(users)
-    print("Finish user_update")
+    pop_user_from_semaphore(client, user_id, previous_emoji)
 
+    if is_user_subscribed(user_id, emoji):
+        push_user_to_semaphore(client, user_id, emoji)
 
-def semaphore_update(user_id, emoji):
-    print("Implement semaphore_update")
+    print(semaphores)  # TODO: REMOVE DEBUG
 
 
 def semaphore_join(user_id, emoji):
     if emoji in semaphores.keys():
         semaphore = semaphores[emoji]
 
-        if user_id in subscriptions[emoji]:
+        if is_user_subscribed(user_id, emoji):
             return f"You're already part of {emoji}."
 
         subscriptions[emoji].add(user_id)
         return (
             f"Right-o! You've joined the {emoji} semaphore that manages access "
-            + f"to {semaphore['resource']}.\nSet {emoji} as your Slack Status Emoji "
+            + f"to {semaphore['resource']}.\nSet {emoji} as your status emoji "
             + "whenever you want to secure access to that resource. After you're "
-            + "done using that resource, just clear your Status and I'll notify the "
-            + "next person waiting for it that they can use it now."
+            + "done using it, just clear your status and I'll notify the next "
+            + "person in line so that they can use it."
+        )
+    else:
+        return f"Sorry, there is no semaphore for {emoji}."
+
+
+def semaphore_leave(user_id, emoji):
+    if emoji in semaphores.keys():
+        if not is_user_subscribed(user_id, emoji):
+            return f"You are not participating in {emoji}."
+
+        subscriptions[emoji].remove(user_id)
+        return (
+            f"You are no longer participating in the {emoji} semaphore.\n"
+            + "Thank you for joining the experiment :patricklove:!"
         )
     else:
         return f"Sorry, there is no semaphore for {emoji}."
@@ -74,59 +193,59 @@ def semaphore_join(user_id, emoji):
 
 def semaphore_list():
     message = (
-        "These are the available semaphores, what resource they manage and "
-        + "how many may use it simultaneously:\n"
+        "These are the available semaphores, the resources they manage and "
+        + "how many may use them simultaneously:\n"
     )
 
     for emoji in semaphores.keys():
         semaphore = semaphores[emoji]
         resource = semaphore["resource"]
         seats = semaphore["seats"]
-        message += (
-            f"\n - {emoji} - {resource} ({seats} seat{'s' if seats != 1 else ''})"
-        )
+        message += f"\n- {emoji} - {resource} ({seats} seat{'s' if seats != 1 else ''})"
 
     return message
 
 
-@app.message()
-def say_hello(message, say):
-    user = message["user"]
-    say(f"Hello, <@{user}>!")
-    # Not working. Are we missing OAuth scopes?
+# Not working and not necessary.
+# @app.message()
+# def say_hello(message, say):
+#     user = message["user"]
+#     say(f"Hello, <@{user}>!")
 
 
 @app.command("/semaphore_list")
 def cmd_semaphore_list(ack, say):
+    message = semaphore_list()
     ack()
-    say(semaphore_list())
+    say(message)
 
 
 @app.command("/semaphore_join")
 def cmd_semaphore_join(ack, body, say):
     user_id = body["user_id"]
     emoji = body["text"]
+    message = semaphore_join(user_id, emoji)
     ack()
-    say(semaphore_join(user_id, emoji))
+    say(message)
 
 
 @app.command("/semaphore_leave")
 def cmd_semaphore_leave(ack, body, say):
     user_id = body["user_id"]
     emoji = body["text"]
-    print("Implement /semaphore_leave")
-    # ack()
-    # say("Sorry to see you go. Feel free to join again any time :)")
+    message = semaphore_leave(user_id, emoji)
+    ack()
+    say(message)
 
 
 @app.event("user_status_changed")
-def receive_status_update(client, event, say):
+def receive_status_update(client, event):
     user = event["user"]
     emoji = event["user"]["profile"]["status_emoji"]
     ftime = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
-    print(f"[{ftime}] {user['name']} ({user['id']}) has {emoji}")
-
-    user_update(user["id"], emoji)
+    print(f"[{ftime}] {user['name']} ({user['id']}) has {emoji}")  # TODO: REMOVE DEBUG
+    # Any messages are sent back using client instead of say
+    user_update(client, user["id"], emoji)
 
 
 if __name__ == "__main__":
@@ -135,4 +254,3 @@ if __name__ == "__main__":
 
     handler = SocketModeHandler(app, config.SLACK_SOCKET_MODE_TOKEN)
     handler.start()  # use this to have an event listener
-    # handler.connect() # use this to just connect without blocking the thread
