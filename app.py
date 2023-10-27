@@ -55,6 +55,9 @@ def try_advance_semaphore(client, emoji):
         semaphore["holders"].append(new_holder)
         notify_user_of_acquiring(client, new_holder, emoji)
         notify_enqueued_users(client, emoji)
+        return True
+
+    return False
 
 
 def pop_user_from_semaphore(client, user_id, emoji):
@@ -90,8 +93,17 @@ def push_user_to_semaphore(client, user_id, emoji):
         return
 
     semaphore["queue"].append(user_id)
-    try_advance_semaphore(client, emoji)
+    acquired = try_advance_semaphore(client, emoji)
     notify_holders(client, emoji)
+
+    if not acquired:
+        index = semaphore["queue"].index(user_id)
+        message = f"I see you're interested in {emoji}. You didn't get access just yet, though.\nYou're "
+        if index == 0:
+            message += "next in line. Be prepared, it's coming soon!"
+        else:
+            message += f"behind {index} others waiting for the resource."
+        client.chat_postMessage(channel=user_id, text=message)
 
 
 def notify_user_of_acquiring(client, user_id, emoji):
@@ -206,6 +218,29 @@ def semaphore_list():
     return message
 
 
+def semaphore_who(client, emoji):
+    if emoji not in semaphores.keys():
+        return f"Sorry, there is no semaphore for {emoji}."
+
+    semaphore = semaphores[emoji]
+    resource = semaphore["resource"]
+    holders = semaphore["holders"]
+
+    if len(holders) == 0:
+        return f"Nobody has {emoji} now."
+
+    holder_names = []
+    for holder in holders:
+        user = client.users_profile_get(user=holder)
+        name = user["profile"]["real_name"]
+        holder_names.append(name)
+
+    message = f"Right now, these fine folks have secured access to {resource} through {emoji}:\n"
+    message += ", ".join(holder_names) + "."
+
+    return message
+
+
 # Not working and not necessary.
 # @app.message()
 # def say_hello(message, say):
@@ -234,6 +269,14 @@ def cmd_semaphore_leave(ack, body, say):
     user_id = body["user_id"]
     emoji = body["text"]
     message = semaphore_leave(user_id, emoji)
+    ack()
+    say(message)
+
+
+@app.command("/semaphore_who")
+def cmd_semaphore_who(ack, body, client, say):
+    emoji = body["text"]
+    message = semaphore_who(client, emoji)
     ack()
     say(message)
 
