@@ -4,6 +4,8 @@ Resource access management with emojis 🙏🚦
 
 ## How to
 
+Use the `manifest.json` for creating the application in Slack.
+
 Create a `.env` file following the example `.env.example`. Run:
 
 ```bash
